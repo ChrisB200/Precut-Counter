@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sqlite3
@@ -34,8 +35,9 @@ if drop_precut_channel is None:
 DROP_PRECUT_CHANNEL = int(drop_precut_channel)
 
 
-def get_duration(attachment_url):
-    result = subprocess.run(
+async def get_duration(attachment_url):
+    result = await asyncio.to_thread(
+        subprocess.run,
         [
             "ffprobe",
             "-v",
@@ -50,9 +52,7 @@ def get_duration(attachment_url):
         text=True,
     )
 
-    duration = float(result.stdout.strip())
-
-    return duration
+    return float(result.stdout.strip())
 
 
 def add_attachment(attachment):
@@ -126,7 +126,7 @@ async def first_time_run():
     if is_first_time_run():
         async for message in channel.history():
             for donation in get_message(message):
-                donation["duration"] = get_duration(donation["attachment_url"])
+                donation["duration"] = await get_duration(donation["attachment_url"])
                 add_attachment(donation)
 
         conn.commit()
@@ -145,7 +145,7 @@ async def on_message(message):
     donations = get_message(message)
 
     for donation in donations:
-        donation["duration"] = get_duration(donation["attachment_url"])
+        donation["duration"] = await get_duration(donation["attachment_url"])
         add_attachment(donation)
 
     await client.process_commands(message)
