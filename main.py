@@ -172,20 +172,20 @@ async def first_time_run():
 
 @client.event
 async def on_message(message):
-    # Ignore bots
     if message.author.bot:
         return
 
-    # Only process your precut channel
-    if message.channel.id != DROP_PRECUT_CHANNEL:
-        return
+    # Only index videos in the precut channel
+    if message.channel.id == DROP_PRECUT_CHANNEL:
+        donations = get_message(message)
 
-    donations = get_message(message)
+        for donation in donations:
+            donation["duration"] = await get_duration(donation["attachment_url"])
+            add_attachment(donation)
 
-    for donation in donations:
-        donation["duration"] = await get_duration(donation["attachment_url"])
-        add_attachment(donation)
+        conn.commit()
 
+    # Always process commands, regardless of channel
     await client.process_commands(message)
 
 
@@ -212,7 +212,8 @@ async def on_ready():
 async def leaderboard(ctx):
     cursor.execute("SELECT COUNT(*) FROM attachments")
     print(cursor.fetchone())
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT
             author_id,
             COUNT(*) AS precut_count,
@@ -221,7 +222,8 @@ async def leaderboard(ctx):
         GROUP BY author_id
         ORDER BY total_duration DESC
         LIMIT 10;
-        """)
+        """
+    )
 
     rows = cursor.fetchall()
 
@@ -254,9 +256,7 @@ async def leaderboard(ctx):
 
         embed.add_field(
             name=f"{i}. {username}",
-            value=(
-                f"📹 **{count}** precuts\n" f"⏱️ **{hours}h {minutes}m {seconds}s**"
-            ),
+            value=(f"📹 **{count}** precuts\n" f"⏱️ **{hours}h {minutes}m {seconds}s**"),
             inline=False,
         )
 
