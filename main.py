@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -50,7 +51,11 @@ async def get_duration(attachment_url):
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
 
     return float(result.stdout.strip())
 
@@ -108,7 +113,6 @@ def get_message(message):
 
         donations.append(temp)
 
-    print(donations)
     return donations
 
 
@@ -123,13 +127,47 @@ async def first_time_run():
     if channel is None:
         raise ValueError("DROP_PRECUT_CHANNEL not found")
 
-    if is_first_time_run():
-        async for message in channel.history():
-            for donation in get_message(message):
-                donation["duration"] = await get_duration(donation["attachment_url"])
-                add_attachment(donation)
+    if not is_first_time_run():
+        return
 
-        conn.commit()
+    print("Scanning channel history...")
+
+    donations = []
+
+    async for message in channel.history(limit=None):
+        donations.extend(get_message(message))
+
+    total = len(donations)
+
+    print(f"Found {total} videos.")
+    print("Calculating durations...")
+
+    semaphore = asyncio.Semaphore(8)
+
+    progress = tqdm(
+        total=total,
+        desc="Indexing",
+        unit="video",
+        dynamic_ncols=True,
+    )
+
+    async def process_donation(donation):
+        async with semaphore:
+            donation["duration"] = await get_duration(donation["attachment_url"])
+
+            add_attachment(donation)
+
+            progress.update(1)
+
+    tasks = [asyncio.create_task(process_donation(donation)) for donation in donations]
+
+    await asyncio.gather(*tasks)
+
+    progress.close()
+
+    conn.commit()
+
+    print("Finished indexing.")
 
 
 @client.event
