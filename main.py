@@ -21,9 +21,9 @@ from embeds import leaderboard_embed
 from utils import (
     get_duration,
     get_message,
-    schedule_leaderboard_update,
+    leaderboard_updater,
+    mark_leaderboards_dirty,
     sync_precuts,
-    update_leaderboards,
 )
 
 load_dotenv()
@@ -46,7 +46,8 @@ async def on_message(message):
 
         conn.commit()
 
-        await schedule_leaderboard_update()
+        client.loop.create_task(leaderboard_updater())
+        mark_leaderboards_dirty()
 
     # Always process commands, regardless of channel
     await client.process_commands(message)
@@ -56,7 +57,7 @@ async def on_message(message):
 async def on_message_delete(message):
     logger.debug("Attempting to delete message %s", message.id)
     delete_precut(message.id)
-    await schedule_leaderboard_update()
+    mark_leaderboards_dirty()
     logger.info("Deleted attachments with message_id %s", message.id)
 
 
@@ -70,7 +71,7 @@ async def on_ready():
         print(f"Syncing {channel}")
         await sync_precuts(channel)
     await sync_precuts(DROP_PRECUT_CHANNEL)
-    await schedule_leaderboard_update()
+    mark_leaderboards_dirty()
     synced = await client.tree.sync()
 
 

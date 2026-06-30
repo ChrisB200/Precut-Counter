@@ -16,7 +16,23 @@ from database import (
 )
 from embeds import leaderboard_embed
 
-leaderboard_task = None
+leaderboard_dirty = False
+
+
+def mark_leaderboards_dirty():
+    global leaderboard_dirty
+    leaderboard_dirty = True
+
+
+async def leaderboard_updater():
+    global leaderboard_dirty
+
+    while True:
+        if leaderboard_dirty:
+            leaderboard_dirty = False
+            await update_leaderboards()
+
+        await asyncio.sleep(5)
 
 
 async def get_duration(attachment_url):
@@ -167,7 +183,7 @@ async def sync_precuts(channel_id):
     elif isinstance(channel, discord.ForumChannel):
         await sync_forum(channel)
 
-    await schedule_leaderboard_update()
+    mark_leaderboards_dirty()
 
 
 async def first_time_run():
@@ -217,26 +233,6 @@ async def first_time_run():
     conn.commit()
 
     print("Finished indexing.")
-
-
-async def schedule_leaderboard_update():
-    global leaderboard_task
-
-    # One update is already queued
-    if leaderboard_task is not None and not leaderboard_task.done():
-        return
-
-    async def worker():
-        # Wait a little so multiple events get batched together
-        await asyncio.sleep(2)
-
-        try:
-            await schedule_leaderboard_update()
-        finally:
-            global leaderboard_task
-            leaderboard_task = None
-
-    leaderboard_task = asyncio.create_task(worker())
 
 
 async def update_leaderboards():
