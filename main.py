@@ -168,11 +168,10 @@ async def register_demon(
     )
 
     print("After:", cursor.fetchone())
-    await sync_precuts(channel.id)
-
     await interaction.response.send_message(
         f"Registered {channel.mention} (ID: {channel.id})"
     )
+    await sync_precuts(channel.id)
 
     logger.info("Registered channel %s", channel.name)
 
