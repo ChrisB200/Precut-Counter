@@ -1,173 +1,28 @@
-import asyncio
 import logging
-import os
-import sqlite3
-import subprocess
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 from dotenv import load_dotenv
-from tqdm import tqdm
+
+from config import ACCESS_TOKEN, DROP_PRECUT_CHANNEL, client, cursor
+from database import (
+    add_channel,
+    add_leaderboard,
+    add_precut,
+    conn,
+    delete_channel,
+    delete_drop_precuts,
+    delete_precut,
+    get_channels,
+    get_demon_leaderboard,
+    get_global_leaderboard,
+)
+from embeds import leaderboard_embed
+from utils import get_duration, get_message, sync_precuts, update_leaderboards
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-prefix = "."
-intents = discord.Intents.default()
-intents.message_content = True
-
-client = commands.Bot(command_prefix=prefix, intents=intents)
-
-conn = sqlite3.connect("precut_counter.db")
-cursor = conn.cursor()
-conn.executescript(open("precut_counter.sql").read())
-
-
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-if ACCESS_TOKEN is None:
-    raise ValueError("ACCESS_TOKEN env var not provided")
-
-drop_precut_channel = os.getenv("DROP_PRECUT_CHANNEL")
-if drop_precut_channel is None:
-    raise ValueError("DROP_PRECUT_CHANNEL env var not provided")
-
-DROP_PRECUT_CHANNEL = int(drop_precut_channel)
-
-
-async def get_duration(attachment_url):
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            attachment_url,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr)
-
-    return float(result.stdout.strip())
-
-
-def add_attachment(attachment):
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO attachments (
-            attachment_id,
-            message_id,
-            author_id,
-            duration
-        )
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            attachment["attachment_id"],
-            attachment["message_id"],
-            attachment["author_id"],
-            attachment["duration"],
-        ),
-    )
-
-
-def get_message(message):
-    attachments = list(message.attachments)
-
-    if message.message_snapshots:
-        snapshot = message.message_snapshots[0]
-        attachments = list(snapshot.attachments)
-
-    donations = []
-    for attachment in attachments:
-        if not attachment.content_type:
-            continue
-
-        if not attachment.content_type.startswith("video/"):
-            continue
-
-        is_video = (
-            attachment.content_type is not None
-            and attachment.content_type.startswith("video/")
-        ) or attachment.filename.lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
-
-        if not is_video:
-            continue
-
-        temp = {
-            "author_id": message.author.id,
-            "attachment_id": attachment.id,
-            "attachment_url": attachment.url,
-            "message_id": message.id,
-            "duration": None,
-        }
-
-        donations.append(temp)
-
-    return donations
-
-
-def is_first_time_run():
-    cursor.execute("SELECT COUNT(*) FROM attachments")
-    count = cursor.fetchone()[0]
-    return count == 0
-
-
-async def first_time_run():
-    channel = client.get_channel(DROP_PRECUT_CHANNEL)
-    if channel is None:
-        raise ValueError("DROP_PRECUT_CHANNEL not found")
-
-    if not is_first_time_run():
-        return
-
-    print("Scanning channel history...")
-
-    donations = []
-
-    async for message in channel.history(limit=None):
-        donations.extend(get_message(message))
-
-    total = len(donations)
-
-    print(f"Found {total} videos.")
-    print("Calculating durations...")
-
-    semaphore = asyncio.Semaphore(8)
-
-    progress = tqdm(
-        total=total,
-        desc="Indexing",
-        unit="video",
-        dynamic_ncols=True,
-    )
-
-    async def process_donation(donation):
-        async with semaphore:
-            donation["duration"] = await get_duration(donation["attachment_url"])
-
-            add_attachment(donation)
-
-            progress.update(1)
-
-    tasks = [asyncio.create_task(process_donation(donation)) for donation in donations]
-
-    await asyncio.gather(*tasks)
-
-    progress.close()
-
-    conn.commit()
-
-    print("Finished indexing.")
 
 
 @client.event
@@ -181,9 +36,11 @@ async def on_message(message):
 
         for donation in donations:
             donation["duration"] = await get_duration(donation["attachment_url"])
-            add_attachment(donation)
+            add_precut(donation)
 
         conn.commit()
+
+        await update_leaderboards()
 
     # Always process commands, regardless of channel
     await client.process_commands(message)
@@ -191,76 +48,142 @@ async def on_message(message):
 
 @client.event
 async def on_message_delete(message):
-    print("message delete")
-    cursor.execute(
-        "DELETE FROM attachments WHERE message_id = ?",
-        (message.id,),
-    )
-    conn.commit()
+    logger.debug("Attempting to delete message %s", message.id)
+    delete_precut(message.id)
+    await update_leaderboards()
+    logger.info("Deleted attachments with message_id %s", message.id)
 
 
 @client.event
 async def on_ready():
 
-    await client.tree.sync()
     print(f"Logged in as {client.user}")
 
-    await first_time_run()
+    demons = get_channels()
+    for channel, owner_id in demons:
+        print(f"Syncing {channel}")
+        await sync_precuts(channel)
+    await sync_precuts(DROP_PRECUT_CHANNEL)
+    await update_leaderboards()
+    synced = await client.tree.sync()
 
 
-@client.command()
-async def leaderboard(ctx):
-    cursor.execute("SELECT COUNT(*) FROM attachments")
-    print(cursor.fetchone())
-    cursor.execute(
-        """
-        SELECT
-            author_id,
-            COUNT(*) AS precut_count,
-            SUM(duration) AS total_duration
-        FROM attachments
-        GROUP BY author_id
-        ORDER BY total_duration DESC
-        LIMIT 10;
-        """
+demon = app_commands.Group(
+    name="demon",
+    description="Demon commands",
+)
+
+
+@app_commands.choices(
+    type=[
+        app_commands.Choice(name="Global", value="global"),
+        app_commands.Choice(name="Demons", value="demons"),
+    ]
+)
+@client.tree.command(
+    name="leaderboard",
+    description="Create a live leaderboard.",
+)
+async def leaderboard(
+    interaction: discord.Interaction,
+    type: app_commands.Choice[str],
+):
+    if type.value == "global":
+        rows = get_global_leaderboard()
+    else:
+        rows = get_demon_leaderboard()
+
+    embed = (await leaderboard_embed(client, rows))[0]
+
+    await interaction.response.send_message(embed=embed)
+
+    message = await interaction.original_response()
+
+    add_leaderboard(
+        message.id,
+        message.channel.id,
+        type.value,
     )
 
-    rows = cursor.fetchall()
 
-    embed = discord.Embed(
-        title="🏆 Precut Leaderboard",
-        colour=discord.Colour.gold(),
-    )
-
-    if not rows:
-        embed.description = "No precuts have been indexed yet."
-        await ctx.response.send_message(embed=embed)
-        return
-
-    for i, (author_id, count, duration) in enumerate(rows, start=1):
-        user = client.get_user(author_id)
-
-        if user is None:
-            try:
-                user = await client.fetch_user(author_id)
-            except discord.NotFound:
-                username = f"Unknown User ({author_id})"
-            else:
-                username = user.display_name
-        else:
-            username = user.display_name
-
-        hours = int(duration // 3600)
-        minutes = int((duration % 3600) // 60)
-        seconds = int(duration % 60)
-
-        embed.add_field(
-            name=f"{i}. {username}",
-            value=(f"📹 **{count}** precuts\n" f"⏱️ **{hours}h {minutes}m {seconds}s**"),
-            inline=False,
+@demon.command(name="register", description="Register a precut demon's channel")
+async def register_demon(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel | discord.ForumChannel,
+):
+    if isinstance(channel, discord.TextChannel):
+        first_message = await anext(
+            channel.history(limit=1, oldest_first=True),
+            None,
         )
 
-    await ctx.send(embed=embed)
+        if first_message is None:
+            return
+
+        owner_id = first_message.author.id
+
+    elif isinstance(channel, discord.ForumChannel):
+        if not channel.threads:
+            return
+
+        first_thread = min(
+            channel.threads,
+            key=lambda t: t.created_at,
+        )
+        owner_id = first_thread.owner_id
+
+    add_channel(channel.id, owner_id)
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM precuts
+        WHERE author_id = ?
+        AND channel_id = ?
+        """,
+        (owner_id, DROP_PRECUT_CHANNEL),
+    )
+
+    print(cursor.fetchone())
+    delete_drop_precuts(owner_id)
+
+    cursor.execute(
+        """
+
+        SELECT COUNT(*)
+
+        FROM precuts
+
+        WHERE author_id = ?
+
+        AND channel_id = ?
+
+        """,
+        (owner_id, DROP_PRECUT_CHANNEL),
+    )
+
+    print("After:", cursor.fetchone())
+    await sync_precuts(channel.id)
+
+    await interaction.response.send_message(
+        f"Registered {channel.mention} (ID: {channel.id})"
+    )
+
+    logger.info("Registered channel %s", channel.name)
 
 
+@demon.command(name="unregister", description="Unregister a precut demon's channel")
+async def unregister_demon(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel | discord.ForumChannel,
+):
+    delete_channel(channel.id)
+
+    await interaction.response.send_message(
+        f"Unregistered {channel.mention} (ID: {channel.id})"
+    )
+
+    logger.info("Unregistered channel %s", channel.name)
+
+
+client.tree.add_command(demon)
 client.run(ACCESS_TOKEN)
