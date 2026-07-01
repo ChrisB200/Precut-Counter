@@ -17,11 +17,11 @@ from database import (
     delete_precut,
     get_channels,
     get_demon_leaderboard,
-    get_demon_owner_id,
     get_global_leaderboard,
     get_leaderboard_message,
+    get_stats,
 )
-from embeds import leaderboard_embed
+from embeds import leaderboard_embed, stats_embed
 from utils import (
     first_channel_message,
     get_duration,
@@ -67,7 +67,6 @@ async def on_message(message):
 
 @client.event
 async def on_message_delete(message):
-    logger.debug("Attempting to delete message %s", message.id)
     delete_precut(message.id)
     mark_leaderboards_dirty()
     logger.info("Deleted attachments with message_id %s", message.id)
@@ -75,14 +74,14 @@ async def on_message_delete(message):
 
 @client.event
 async def on_ready():
-
+    logger.info("Logged in as %s", client.user)
     client.loop.create_task(leaderboard_updater())
-    print(f"Logged in as {client.user}")
 
     demons = get_channels()
-    for channel, owner_id in demons:
-        print(f"Syncing {channel}")
-        await sync_precuts(channel)
+    for channel_id, owner_id in demons:
+        logger.info("Syncing precuts for channel %s owned by %s", channel_id, owner_id)
+        await sync_precuts(channel_id)
+
     await sync_precuts(DROP_PRECUT_CHANNEL)
     mark_leaderboards_dirty()
     await client.tree.sync()
@@ -91,6 +90,11 @@ async def on_ready():
 demon = app_commands.Group(
     name="demon",
     description="Demon commands",
+)
+
+precut = app_commands.Group(
+    name="precut",
+    description="Precut commands",
 )
 
 
@@ -245,5 +249,17 @@ async def unregister_demon(
     logger.info("Unregistered channel %s", channel.name)
 
 
+@precut.command(name="stats", description="Check your precut stats")
+async def stats(interaction: discord.Interaction):
+    embed = await stats_embed(
+        interaction.client,
+        get_stats(interaction.user.id),
+        interaction.user,
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+
 client.tree.add_command(demon)
+client.tree.add_command(precut)
 client.run(ACCESS_TOKEN)

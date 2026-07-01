@@ -1,11 +1,13 @@
 import discord
 
+from database import get_time
+
 
 # 0 - precuts have not been indexed
 # 1 - precuts have been indexed
-async def leaderboard_embed(client, rows):
+async def leaderboard_embed(client: discord.Client, rows, board_type: str):
     embed = discord.Embed(
-        title="🏆 Precut Leaderboard",
+        title=f"🏆 {board_type} Precut Leaderboard",
         colour=discord.Colour.gold(),
     )
 
@@ -27,14 +29,53 @@ async def leaderboard_embed(client, rows):
         else:
             username = user.display_name
 
-        hours = int(duration // 3600)
-        minutes = int((duration % 3600) // 60)
-        seconds = int(duration % 60)
-
+        hours, minutes, seconds = get_time(duration)
         mention = user.mention if user else f"<@{author_id}>"
         embed.description += (
             f"**{i}.** {mention}\n"
-            f"📹 {count} precuts • ⏱️ {hours}h {minutes}m {seconds}s\n\n"
+            f"📹 {count} precuts  ⏱️ {hours}h {minutes}m {seconds}s\n\n"
         )
 
     return embed, 1
+
+
+async def stats_embed(
+    client: discord.Client,
+    stats,
+    user: discord.User,
+) -> discord.Embed:
+    owner_id, precut_count, duration, rank = stats
+
+    embed = discord.Embed(
+        title=f"{user.display_name}'s Precut Stats",
+        colour=discord.Colour.blurple(),
+    )
+
+    embed.set_thumbnail(url=user.display_avatar.url)
+
+    if stats is None:
+        embed.description = "You haven't donated any precuts yet."
+        return embed
+
+    duration = duration or 0
+    hours, minutes, seconds = get_time(duration)
+
+    embed.add_field(
+        name="🏆 Leaderboard Position",
+        value=f"#{rank}",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="📹 Total Precuts",
+        value=str(precut_count),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="⏱️ Total Duration",
+        value=f"{hours}h {minutes}m {seconds}s",
+        inline=True,
+    )
+
+    return embed

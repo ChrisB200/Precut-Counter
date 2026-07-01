@@ -258,3 +258,35 @@ def get_leaderboard_message(message_id: int):
     )
 
     return cursor.fetchone()
+
+
+def get_stats(owner_id: int):
+    cursor.execute(
+        """
+        SELECT *
+        FROM (
+            SELECT
+                author_id,
+                COUNT(*) AS count,
+                SUM(duration) AS duration,
+                RANK() OVER (
+                    ORDER BY COUNT(*) DESC,
+                             SUM(duration) DESC
+                ) AS rank
+            FROM precuts
+            GROUP BY author_id
+        )
+        WHERE author_id = ?;
+        """,
+        (owner_id,),
+    )
+
+    row = cursor.fetchone()
+    return row
+
+
+def get_time(duration):
+    hours = int(duration // 3600)
+    minutes = int((duration % 3600) // 60)
+    seconds = int(duration % 60)
+    return hours, minutes, seconds
