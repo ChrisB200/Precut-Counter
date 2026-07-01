@@ -42,6 +42,7 @@ async def leaderboard_embed(client: discord.Client, rows, board_type: str):
 async def stats_embed(
     client: discord.Client,
     stats,
+    last_message: discord.Message | None,
     user: discord.User,
 ):
     embed = discord.Embed(
@@ -77,5 +78,8 @@ async def stats_embed(
         value=f"{hours}h {minutes}m {seconds}s",
         inline=True,
     )
+
+    if last_message:
+        embed.add_field(name="Last Precut", value=last_message.jump_url, inline=False)
 
     return embed

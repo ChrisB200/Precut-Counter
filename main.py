@@ -17,7 +17,10 @@ from database import (
     delete_precut,
     get_channels,
     get_demon_leaderboard,
+    get_demon_owner_id,
     get_global_leaderboard,
+    get_last_donation,
+    get_latest_message_id,
     get_leaderboard_message,
     get_stats,
 )
@@ -258,7 +261,14 @@ async def stats(
         user = user or interaction.user
 
     stats = get_stats(user.id)
-    embed = await stats_embed(interaction.client, stats, user)
+    last_donation = get_last_donation(user.id)
+
+    message = None
+    if last_donation:
+        channel = client.get_channel(last_donation[1])
+        message = await channel.fetch_message(last_donation[0])
+
+    embed = await stats_embed(interaction.client, stats, message, user)
 
     await interaction.response.send_message(embed=embed)
 

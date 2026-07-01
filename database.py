@@ -285,6 +285,21 @@ def get_stats(owner_id: int):
     return row
 
 
+def get_last_donation(owner_id: int):
+    cursor.execute(
+        """
+        SELECT message_id, channel_id
+        FROM precuts
+        WHERE author_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1;
+        """,
+        (owner_id,),
+    )
+    row = cursor.fetchone()
+    return row
+
+
 def get_time(duration):
     hours = int(duration // 3600)
     minutes = int((duration % 3600) // 60)

@@ -252,3 +252,7 @@ def get_forum_owner(channel: discord.ForumChannel) -> int | None:
     logger.debug("Found owner id: %s in forum channel %s", owner_id, channel.name)
 
     return owner_id
+
+
+def get_last_message(owner_id: int, message_id: int):
+    pass
