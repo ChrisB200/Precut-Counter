@@ -270,8 +270,8 @@ def get_stats(owner_id: int):
                 COUNT(*) AS count,
                 SUM(duration) AS duration,
                 RANK() OVER (
-                    ORDER BY COUNT(*) DESC,
-                             SUM(duration) DESC
+                    ORDER BY SUM(duration) DESC,
+                             COUNT(*) DESC
                 ) AS rank
             FROM precuts
             GROUP BY author_id
