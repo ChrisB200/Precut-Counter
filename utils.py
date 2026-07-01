@@ -1,5 +1,8 @@
 import asyncio
+import logging
 import subprocess
+from datetime import datetime
+from typing import cast
 
 import discord
 from tqdm import tqdm
@@ -17,6 +20,8 @@ from database import (
 from embeds import leaderboard_embed
 
 leaderboard_dirty = False
+
+logger = logging.getLogger(__name__)
 
 
 def mark_leaderboards_dirty():
@@ -107,12 +112,15 @@ async def sync_forum(forum: discord.ForumChannel):
         await sync_text_channel(thread.id)
 
 
-async def sync_text_channel(channel_id):
+async def sync_text_channel(channel_id: int, first=False):
     channel = client.get_channel(channel_id)
     if channel is None:
         return
 
-    latest_message_id = get_latest_message_id(channel_id)
+    if first:
+        latest_message_id = None
+    else:
+        latest_message_id = get_latest_message_id(channel_id)
 
     donations = []
 
@@ -174,11 +182,11 @@ async def sync_text_channel(channel_id):
     print("Finished indexing.")
 
 
-async def sync_precuts(channel_id):
+async def sync_precuts(channel_id: int, first=False):
     channel = client.get_channel(channel_id)
 
     if isinstance(channel, discord.TextChannel):
-        await sync_text_channel(channel.id)
+        await sync_text_channel(channel.id, first)
 
     elif isinstance(channel, discord.ForumChannel):
         await sync_forum(channel)
@@ -255,3 +263,29 @@ async def update_leaderboards():
         embed = await leaderboard_embed(client, rows)
 
         await message.edit(embed=embed[0])
+
+
+async def first_channel_message(channel: discord.TextChannel) -> discord.Message | None:
+    first_message = None
+
+    async for message in channel.history(limit=1, oldest_first=True):
+        first_message = message
+        break
+
+    return first_message
+
+
+def get_forum_owner(channel: discord.ForumChannel) -> int | None:
+    if not channel.threads:
+        logger.warning("There are no threads in forum %s", channel.name)
+        return None
+
+    # assume that the earliest thread is created by the forum owner
+    first_thread = min(
+        channel.threads,
+        key=lambda t: cast(datetime, t.created_at),
+    )
+    owner_id = first_thread.owner_id
+    logger.debug("Found owner id: %s in forum channel %s", owner_id, channel.name)
+
+    return owner_id

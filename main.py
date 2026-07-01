@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
-from config import ACCESS_TOKEN, DROP_PRECUT_CHANNEL, client, cursor
+from config import ACCESS_TOKEN, DROP_PRECUT_CHANNEL, client
 from database import (
     add_channel,
     add_leaderboard,
@@ -12,14 +12,20 @@ from database import (
     conn,
     delete_channel,
     delete_drop_precuts,
+    delete_leaderboard,
+    delete_owner_channels,
     delete_precut,
     get_channels,
     get_demon_leaderboard,
+    get_demon_owner_id,
     get_global_leaderboard,
+    get_leaderboard_message,
 )
 from embeds import leaderboard_embed
 from utils import (
+    first_channel_message,
     get_duration,
+    get_forum_owner,
     get_message,
     leaderboard_updater,
     mark_leaderboards_dirty,
@@ -72,7 +78,7 @@ async def on_ready():
         await sync_precuts(channel)
     await sync_precuts(DROP_PRECUT_CHANNEL)
     mark_leaderboards_dirty()
-    synced = await client.tree.sync()
+    await client.tree.sync()
 
 
 demon = app_commands.Group(
@@ -113,68 +119,92 @@ async def leaderboard(
     )
 
 
+@client.tree.command(
+    name="remove-leaderboard",
+    description="Remove a leaderboard by its message ID",
+)
+async def remove_leaderboard(
+    interaction: discord.Interaction,
+    message_id: str,
+):
+    row = get_leaderboard_message(int(message_id))
+    if row is None:
+        await interaction.response.send_message(
+            "That message isn't a registered leaderboard.",
+            ephemeral=True,
+        )
+        return
+
+    _, channel_id, _ = row
+
+    channel = client.get_channel(channel_id)
+    if channel is None:
+        channel = await client.fetch_channel(channel_id)
+
+    try:
+        message = await channel.fetch_message(int(message_id))
+        await message.delete()
+    except discord.NotFound:
+        pass
+
+    delete_leaderboard(int(message_id))
+
+    await interaction.response.send_message(
+        "Leaderboard removed.",
+        ephemeral=True,
+    )
+
+
 @demon.command(name="register", description="Register a precut demon's channel")
 async def register_demon(
     interaction: discord.Interaction,
     channel: discord.TextChannel | discord.ForumChannel,
 ):
     if isinstance(channel, discord.TextChannel):
-        first_message = await anext(
-            channel.history(limit=1, oldest_first=True),
-            None,
-        )
-
-        if first_message is None:
+        logger.info("Attempting to register channel (text) demon %s", channel.name)
+        first_message = await first_channel_message(channel)
+        if not first_message:
+            logger.warning(
+                "Cannot register text channel %s: no messages found",
+                channel.name,
+            )
+            await interaction.response.send_message(
+                "This channel has no messages to determine the owner.",
+                ephemeral=True,
+            )
             return
 
         owner_id = first_message.author.id
+        add_channel(channel.id, owner_id)
 
     elif isinstance(channel, discord.ForumChannel):
-        if not channel.threads:
+        logger.info("Attempting to register channel (forum) demon %s", channel.name)
+        owner_id = get_forum_owner(channel)
+
+        if not owner_id:
+            logger.warning(
+                "Cannot register forum channel %s: no threads found",
+                channel.name,
+            )
+            await interaction.response.send_message(
+                "This channel has no threads to determine the owner.",
+                ephemeral=True,
+            )
             return
 
-        first_thread = min(
-            channel.threads,
-            key=lambda t: t.created_at,
-        )
-        owner_id = first_thread.owner_id
+        # register all channels within the forum
+        for thread in channel.threads:
+            add_channel(thread.id, owner_id)
 
-    add_channel(channel.id, owner_id)
-    cursor.execute(
-        """
-        SELECT COUNT(*)
-        FROM precuts
-        WHERE author_id = ?
-        AND channel_id = ?
-        """,
-        (owner_id, DROP_PRECUT_CHANNEL),
-    )
-
-    print(cursor.fetchone())
+    # allows us to recount precuts from their channel and not DROP PRECUTS
     delete_drop_precuts(owner_id)
 
-    cursor.execute(
-        """
-
-        SELECT COUNT(*)
-
-        FROM precuts
-
-        WHERE author_id = ?
-
-        AND channel_id = ?
-
-        """,
-        (owner_id, DROP_PRECUT_CHANNEL),
-    )
-
-    print("After:", cursor.fetchone())
     await interaction.response.send_message(
-        f"Registered {channel.mention} (ID: {channel.id})"
+        f"Registered {channel.mention} (ID: {channel.name})", ephemeral=True
     )
-    await sync_precuts(channel.id)
+    logger.info("Registered channel %s for owner %s", channel.id, owner_id)
 
-    logger.info("Registered channel %s", channel.name)
+    await sync_precuts(channel.id)
 
 
 @demon.command(name="unregister", description="Unregister a precut demon's channel")
@@ -182,11 +212,28 @@ async def unregister_demon(
     interaction: discord.Interaction,
     channel: discord.TextChannel | discord.ForumChannel,
 ):
-    delete_channel(channel.id)
+    if isinstance(channel, discord.TextChannel):
+        delete_channel(channel.id)
+        await interaction.response.send_message(
+            f"Unregistered {channel.mention} (ID: {channel.id})", ephemeral=True
+        )
+    elif isinstance(channel, discord.ForumChannel):
+        owner_id = get_forum_owner(channel)
+        if not owner_id:
+            await interaction.response.send_message(
+                f"Could not find owner for forum channel {channel.mention}",
+                ephemeral=True,
+            )
+            return
 
-    await interaction.response.send_message(
-        f"Unregistered {channel.mention} (ID: {channel.id})"
-    )
+        delete_owner_channels(owner_id)
+        await interaction.response.send_message(
+            f"Unregistered {channel.mention} (ID: {channel.id})", ephemeral=True
+        )
+
+    # ensures that if a demon is unregistered
+    # then their precuts are recounted from DROP PRECUTS
+    await sync_precuts(DROP_PRECUT_CHANNEL, True)
 
     logger.info("Unregistered channel %s", channel.name)
 
