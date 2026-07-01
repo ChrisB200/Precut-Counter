@@ -43,9 +43,7 @@ async def stats_embed(
     client: discord.Client,
     stats,
     user: discord.User,
-) -> discord.Embed:
-    owner_id, precut_count, duration, rank = stats
-
+):
     embed = discord.Embed(
         title=f"{user.display_name}'s Precut Stats",
         colour=discord.Colour.blurple(),
@@ -54,8 +52,10 @@ async def stats_embed(
     embed.set_thumbnail(url=user.display_avatar.url)
 
     if stats is None:
-        embed.description = "You haven't donated any precuts yet."
+        embed.description = "No precuts have been donated yet BUM."
         return embed
+
+    owner_id, precut_count, duration, rank = stats
 
     duration = duration or 0
     hours, minutes, seconds = get_time(duration)

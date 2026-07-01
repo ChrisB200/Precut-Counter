@@ -249,13 +249,16 @@ async def unregister_demon(
     logger.info("Unregistered channel %s", channel.name)
 
 
-@precut.command(name="stats", description="Check your precut stats")
-async def stats(interaction: discord.Interaction):
-    embed = await stats_embed(
-        interaction.client,
-        get_stats(interaction.user.id),
-        interaction.user,
-    )
+@precut.command(name="stats", description="Check precut stats")
+async def stats(
+    interaction: discord.Interaction,
+    user: discord.Member | None = None,
+):
+    if not user:
+        user = user or interaction.user
+
+    stats = get_stats(user.id)
+    embed = await stats_embed(interaction.client, stats, user)
 
     await interaction.response.send_message(embed=embed)
 
