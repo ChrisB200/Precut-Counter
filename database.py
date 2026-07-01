@@ -190,7 +190,7 @@ def get_demon_owner_id(channel_id: int) -> int | None:
         logger.info("No demon with channel %s", channel_id)
         return None
 
-    return channel_id
+    return row[0]
 
 
 def get_demon_owner_ids():

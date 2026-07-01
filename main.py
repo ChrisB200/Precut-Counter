@@ -36,6 +36,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 
 @client.event
 async def on_message(message):
@@ -44,7 +50,8 @@ async def on_message(message):
 
     # Only index videos in the precut channel
     if message.channel.id == DROP_PRECUT_CHANNEL:
-        donations = get_message(message)
+        print("donation")
+        donations = get_message(message, message.author.id)
 
         for donation in donations:
             donation["duration"] = await get_duration(donation["attachment_url"])
@@ -52,7 +59,6 @@ async def on_message(message):
 
         conn.commit()
 
-        client.loop.create_task(leaderboard_updater())
         mark_leaderboards_dirty()
 
     # Always process commands, regardless of channel
@@ -70,6 +76,7 @@ async def on_message_delete(message):
 @client.event
 async def on_ready():
 
+    client.loop.create_task(leaderboard_updater())
     print(f"Logged in as {client.user}")
 
     demons = get_channels()

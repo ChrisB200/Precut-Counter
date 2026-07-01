@@ -11,6 +11,7 @@ from config import DROP_PRECUT_CHANNEL, client, conn
 from database import (
     add_precut,
     get_demon_leaderboard,
+    get_demon_owner_id,
     get_demon_owner_ids,
     get_global_leaderboard,
     get_latest_message_id,
@@ -64,7 +65,7 @@ async def get_duration(attachment_url):
     return float(result.stdout.strip())
 
 
-def get_message(message):
+def get_message(message, owner_id: int):
     attachments = list(message.attachments)
 
     if message.message_snapshots:
@@ -93,7 +94,7 @@ def get_message(message):
             channel_id = message.channel.id
 
         temp = {
-            "author_id": message.author.id,
+            "author_id": owner_id,
             "attachment_id": attachment.id,
             "attachment_url": attachment.url,
             "message_id": message.id,
@@ -138,12 +139,24 @@ async def sync_text_channel(channel_id: int, first=False):
         )
 
     registered_demons = get_demon_owner_ids()
+    channel_owner_id = get_demon_owner_id(channel.id)
 
     async for message in history:
-        if channel.id == DROP_PRECUT_CHANNEL and message.author.id in registered_demons:
+        if channel.id == DROP_PRECUT_CHANNEL:
+            # Ignore uploads from registered demons in the drop channel.
+            if message.author.id in registered_demons:
+                continue
+
+            owner_id = message.author.id
+
+        elif channel_owner_id is not None:
+            # Everything in a registered demon's channel belongs to them.
+            owner_id = channel_owner_id
+
+        else:
             continue
 
-        donations.extend(get_message(message))
+        donations.extend(get_message(message, owner_id))
 
     total = len(donations)
 
