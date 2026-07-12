@@ -1,6 +1,6 @@
 import discord
 
-from database import get_time
+from src.utils import get_time
 
 
 # 0 - precuts have not been indexed
@@ -40,7 +40,6 @@ async def leaderboard_embed(client: discord.Client, rows, board_type: str):
 
 
 async def stats_embed(
-    client: discord.Client,
     stats,
     last_message: discord.Message | None,
     user: discord.User,
